@@ -361,15 +361,25 @@ export default function VoiceChat({ tutorName, tutorImage, onBack }: VoiceChatPr
     console.log('Adding user message:', userMessage);
     setMessages(prev => [...prev, userMessage]);
 
+    // Guardar en contexto de conversación
+    conversationContextRef.current.push(`User said: "${cleanTranscript}"`);
+    if (conversationContextRef.current.length > 10) {
+      conversationContextRef.current.shift();
+    }
+
     try {
       // Pequeña pausa natural
       await new Promise(resolve => setTimeout(resolve, 400));
       
-      // Obtener respuesta de IA
-      const reply = getAIResponse(cleanTranscript, tutorName);
+      // Obtener respuesta de IA usando la API real
+      const reply = await getAIResponseFromAPI(messages.concat(userMessage), tutorName);
       console.log('AI reply:', reply);
+      
       const assistantMessage: Message = { role: 'assistant', content: reply };
       setMessages(prev => [...prev, assistantMessage]);
+      
+      // Guardar respuesta de IA en contexto
+      conversationContextRef.current.push(`AI replied: "${reply}"`);
 
       // Pausar reconocimiento mientras la AI habla
       if (recognitionRef.current && isListening) {
@@ -398,6 +408,12 @@ export default function VoiceChat({ tutorName, tutorImage, onBack }: VoiceChatPr
       
     } catch (error) {
       console.error('Error processing speech:', error);
+      // Fallback a respuesta predefinida
+      const fallbackReply = "Sorry, I had a connection issue. Can you repeat that?";
+      const assistantMessage: Message = { role: 'assistant', content: fallbackReply };
+      setMessages(prev => [...prev, assistantMessage]);
+      await speakText(fallbackReply);
+      
       // Reintentar reconocimiento si hay error
       if (recognitionRef.current && isInCallRef.current) {
         try {
@@ -408,6 +424,34 @@ export default function VoiceChat({ tutorName, tutorImage, onBack }: VoiceChatPr
     } finally {
       isProcessingRef.current = false;
       lastTranscriptRef.current = '';
+    }
+  };
+
+  // Nueva función para llamar a la API real
+  const getAIResponseFromAPI = async (allMessages: Message[], tutor: string): Promise<string> => {
+    try {
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messages: allMessages,
+          tutorName: tutor,
+          conversationHistory: conversationContextRef.current,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('API request failed');
+      }
+
+      const data = await response.json();
+      return data.reply || "Sorry, I didn't catch that.";
+    } catch (error) {
+      console.error('API call failed:', error);
+      // Fallback a respuesta genérica
+      return getAIResponse('', tutor);
     }
   };
 
